@@ -46,7 +46,7 @@ services/api        FastAPI service (routes at / and /api)
 services/worker     SQS poller + FFmpeg transcoder
 services/frontend   Static HTML/CSS/JS (config.js holds the API base URL)
 infra/terraform     All AWS resources
-.github/workflows   ci-deploy.yml, rollback.yml, infra.yml
+../.github/workflows  ci-deploy.yml, rollback.yml, infra.yml (at the git repo root)
 scripts/            LocalStack bootstrap for docker-compose
 ```
 

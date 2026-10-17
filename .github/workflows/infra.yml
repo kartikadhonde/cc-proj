@@ -3,7 +3,7 @@ name: Terraform
 on:
   pull_request:
     paths:
-      - "infra/**"
+      - "video-platform/infra/**"
       - ".github/workflows/infra.yml"
   workflow_dispatch:
 
@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: infra/terraform
+        working-directory: video-platform/infra/terraform
     steps:
       - uses: actions/checkout@v4
 

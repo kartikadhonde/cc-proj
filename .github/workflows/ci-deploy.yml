@@ -34,11 +34,11 @@ jobs:
         with:
           filters: |
             api:
-              - 'services/api/**'
+              - 'video-platform/services/api/**'
             worker:
-              - 'services/worker/**'
+              - 'video-platform/services/worker/**'
             frontend:
-              - 'services/frontend/**'
+              - 'video-platform/services/frontend/**'
       - id: pick
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -59,14 +59,14 @@ jobs:
         service: ${{ fromJSON(needs.changes.outputs.services) }}
     defaults:
       run:
-        working-directory: services/${{ matrix.service }}
+        working-directory: video-platform/services/${{ matrix.service }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: services/${{ matrix.service }}/requirements*.txt
+          cache-dependency-path: video-platform/services/${{ matrix.service }}/requirements*.txt
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: ruff format --check .
@@ -86,7 +86,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build image
-        run: docker build -t "local/$SERVICE:${{ github.sha }}" "services/$SERVICE"
+        run: docker build -t "local/$SERVICE:${{ github.sha }}" "video-platform/services/$SERVICE"
 
       # Trivy runs from its pinned container image, before any AWS credentials exist
       # in the job, so the scanner never has access to them.
@@ -185,11 +185,11 @@ jobs:
 
       # The page calls the API through CloudFront's /api/* behavior (same HTTPS origin).
       - name: Inject API base URL
-        run: echo 'window.API_BASE_URL = "/api";' > services/frontend/config.js
+        run: echo 'window.API_BASE_URL = "/api";' > video-platform/services/frontend/config.js
 
       - name: Sync to S3
         run: |
-          aws s3 sync services/frontend "s3://${{ steps.target.outputs.bucket }}" \
+          aws s3 sync video-platform/services/frontend "s3://${{ steps.target.outputs.bucket }}" \
             --delete --cache-control "public, max-age=60"
 
       - name: Invalidate CloudFront

@@ -1,5 +1,5 @@
 # Copy to terraform.tfvars (git-ignored) and fill in.
-github_repo     = "your-github-username/video-platform"
+github_repo     = "kartikadhonde/cc-proj"
 tf_state_bucket = "video-platform-tfstate-yourinitials"
 
 # Optional

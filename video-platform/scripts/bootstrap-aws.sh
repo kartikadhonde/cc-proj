@@ -9,9 +9,13 @@
 set -euo pipefail
 
 REGION="${AWS_REGION:-ap-south-1}"
-REPO="${GITHUB_REPO:-kartikadhonde/video-platform}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TF_DIR="$ROOT/infra/terraform"
+# The git repo may live above this folder (e.g. a course repo containing video-platform/).
+GIT_ROOT="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || echo "$ROOT")"
+ORIGIN_REPO="$(git -C "$GIT_ROOT" remote get-url origin 2>/dev/null \
+  | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##' || true)"
+REPO="${GITHUB_REPO:-${ORIGIN_REPO:-kartikadhonde/cc-proj}}"
 
 step() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -56,11 +60,9 @@ EOF
 fi
 
 step "Git repository and GitHub remote"
-cd "$ROOT"
+cd "$GIT_ROOT"
 [ -d .git ] || { git init -q -b main && git add -A && git commit -qm "Initial commit"; }
-if ! gh repo view "$REPO" >/dev/null 2>&1; then
-  gh repo create "$REPO" --private --source "$ROOT" --remote origin
-fi
+gh repo view "$REPO" >/dev/null 2>&1 || gh repo create "$REPO" --private
 git remote get-url origin >/dev/null 2>&1 || git remote add origin "https://github.com/$REPO.git"
 
 step "terraform apply (about 5-10 minutes; type 'yes' when asked)"
@@ -81,7 +83,7 @@ fi
 APP_URL=$(terraform output -raw cloudfront_url)
 
 step "Pushing code and starting the first deploy"
-cd "$ROOT"
+cd "$GIT_ROOT"
 git push -u origin main
 # Right after the first push GitHub may need a few seconds to register the workflow.
 for attempt in 1 2 3 4 5 6; do
