@@ -1,0 +1,80 @@
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service to roll back
+        type: choice
+        options: [api, worker]
+        required: true
+      revision:
+        description: Task definition revision to deploy (blank = current - 1)
+        type: string
+        required: false
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  PROJECT: video-platform
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'video-platform-cluster' }}
+  SERVICE: ${{ inputs.service }}
+
+jobs:
+  rollback:
+    name: Roll back ${{ inputs.service }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Compute target revision
+        id: target
+        env:
+          REQUESTED: ${{ inputs.revision }}
+        run: |
+          CURRENT_ARN=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$PROJECT-$SERVICE" \
+            --query "services[0].taskDefinition" --output text)
+          CURRENT_REV="${CURRENT_ARN##*:}"
+          if [ -n "$REQUESTED" ]; then
+            TARGET_REV="$REQUESTED"
+          else
+            TARGET_REV=$((CURRENT_REV - 1))
+          fi
+          if ! [[ "$TARGET_REV" =~ ^[0-9]+$ ]] || [ "$TARGET_REV" -lt 1 ]; then
+            echo "::error::Invalid target revision '$TARGET_REV' (current is $CURRENT_REV)"
+            exit 1
+          fi
+          TARGET="$PROJECT-$SERVICE:$TARGET_REV"
+          aws ecs describe-task-definition --task-definition "$TARGET" \
+            --query "taskDefinition.containerDefinitions[0].image" --output text
+          echo "Rolling back $SERVICE from revision $CURRENT_REV to $TARGET_REV" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "task_definition=$TARGET" >> "$GITHUB_OUTPUT"
+
+      - name: Update service
+        run: |
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$PROJECT-$SERVICE" \
+            --task-definition "${{ steps.target.outputs.task_definition }}" > /dev/null
+
+      - name: Wait for service stability
+        run: aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$PROJECT-$SERVICE"
+
+      - name: Smoke test
+        if: inputs.service == 'api'
+        run: |
+          ALB="${{ vars.ALB_DNS_NAME }}"
+          [ -n "$ALB" ] || ALB=$(aws elbv2 describe-load-balancers --names "$PROJECT-alb" \
+            --query "LoadBalancers[0].DNSName" --output text)
+          curl -fsS --retry 5 --retry-delay 10 --retry-all-errors "http://$ALB/health"

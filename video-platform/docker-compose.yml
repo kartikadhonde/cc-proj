@@ -1,0 +1,58 @@
+# Fully local stack: LocalStack (S3, SQS, DynamoDB) + API + worker + nginx frontend.
+#   docker compose up --build
+#   open http://localhost:3000
+services:
+  localstack:
+    # Pinned: newer LocalStack releases require an auth token.
+    image: localstack/localstack:3.8
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: s3,sqs,dynamodb
+      AWS_DEFAULT_REGION: ap-south-1
+      # Generates queue URLs like http://localstack:4566/... reachable from other containers.
+      SQS_ENDPOINT_STRATEGY: path
+      LOCALSTACK_HOST: localstack:4566
+    volumes:
+      - ./scripts/init-localstack.sh:/etc/localstack/init/ready.d/init-localstack.sh:ro
+    healthcheck:
+      test: ["CMD", "awslocal", "dynamodb", "describe-table", "--table-name", "video-platform-videos"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  api:
+    build: ./services/api
+    ports:
+      - "8000:8000"
+    environment: &aws-env
+      AWS_REGION: ap-south-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      DDB_TABLE: video-platform-videos
+      UPLOADS_BUCKET: video-platform-uploads
+      PROCESSED_BUCKET: video-platform-processed
+      SQS_QUEUE_URL: http://localstack:4566/queue/ap-south-1/000000000000/video-jobs
+      # The browser runs on the host, so presigned URLs and media links use localhost.
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:4566
+      MEDIA_BASE_URL: http://localhost:4566/video-platform-processed
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+  worker:
+    build: ./services/worker
+    environment: *aws-env
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+  frontend:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./services/frontend:/usr/share/nginx/html:ro
+    depends_on:
+      - api

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StreamForge</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>StreamForge</h1>
+    <p class="tagline">Upload, transcode and stream video on AWS</p>
+  </header>
+
+  <main class="container">
+    <section class="card upload">
+      <h2>Upload a video</h2>
+      <form id="upload-form">
+        <label>
+          Title
+          <input id="title" type="text" maxlength="200" placeholder="My holiday clip" required>
+        </label>
+        <label>
+          MP4 file
+          <input id="file" type="file" accept="video/mp4,.mp4" required>
+        </label>
+        <button id="upload-btn" type="submit">Upload Video</button>
+      </form>
+      <progress id="progress" max="100" value="0" hidden></progress>
+      <p id="upload-status" class="status-text" aria-live="polite"></p>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Library</h2>
+        <span id="refresh-note" class="muted">Refreshes every 5s</span>
+      </div>
+      <p id="list-error" class="error" hidden></p>
+      <div id="grid" class="grid"></div>
+      <p id="empty" class="muted" hidden>No videos yet. Upload one above.</p>
+    </section>
+  </main>
+
+  <dialog id="player-modal">
+    <div class="modal-head">
+      <h3 id="player-title"></h3>
+      <button id="close-modal" class="icon-btn" aria-label="Close">&times;</button>
+    </div>
+    <video id="player" controls playsinline></video>
+    <div id="res-switch" class="res-switch"></div>
+  </dialog>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (git-ignored) and fill in.
+github_repo     = "your-github-username/video-platform"
+tf_state_bucket = "video-platform-tfstate-yourinitials"
+
+# Optional
+# alert_email       = "you@example.com"
+# api_desired_count = 2
+# use_learner_lab   = true
