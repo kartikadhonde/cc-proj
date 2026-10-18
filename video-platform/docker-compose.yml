@@ -49,9 +49,9 @@ services:
         condition: service_healthy
 
   frontend:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     ports:
-      - "3000:80"
+      - "3001:80"
     volumes:
       - ./services/frontend:/usr/share/nginx/html:ro
     depends_on:

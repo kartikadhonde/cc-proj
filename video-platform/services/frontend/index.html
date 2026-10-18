@@ -3,52 +3,339 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>StreamForge</title>
+  <meta name="description" content="Upload, transcode, and stream videos on AWS with automated CI/CD">
+  <title>StreamForge — Cloud Video Streaming</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
-  <header class="topbar">
-    <h1>StreamForge</h1>
-    <p class="tagline">Upload, transcode and stream video on AWS</p>
+<body class="theme-dark">
+  <!-- Top Navigation Bar -->
+  <header class="yt-nav">
+    <div class="nav-left">
+      <button id="menu-btn" class="nav-icon-btn" aria-label="Toggle menu" title="Menu">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+          <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+        </svg>
+      </button>
+      <a href="#" id="brand-logo" class="brand-link" title="StreamForge Home">
+        <div class="logo-badge">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+        </div>
+        <span class="brand-name">StreamForge</span>
+        <span class="brand-tag">PRO</span>
+      </a>
+    </div>
+
+    <div class="nav-center">
+      <div class="search-bar">
+        <div class="search-input-wrapper">
+          <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+          </svg>
+          <input type="text" id="search-input" placeholder="Search videos by title..." autocomplete="off">
+          <button id="clear-search-btn" class="clear-search-btn" hidden aria-label="Clear search">&times;</button>
+        </div>
+        <button id="search-btn" class="search-submit-btn" aria-label="Search" title="Search">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="nav-right">
+      <button id="open-upload-btn" class="btn-create" title="Upload Video">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+        </svg>
+        <span>Upload</span>
+      </button>
+
+      <button class="nav-icon-btn notification-btn" aria-label="Notifications" title="Notifications">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z"/>
+        </svg>
+        <span class="nav-badge-dot"></span>
+      </button>
+
+      <div class="nav-user-avatar" title="Account: Local Developer">
+        <span>SF</span>
+      </div>
+    </div>
   </header>
 
-  <main class="container">
-    <section class="card upload">
-      <h2>Upload a video</h2>
-      <form id="upload-form">
-        <label>
-          Title
-          <input id="title" type="text" maxlength="200" placeholder="My holiday clip" required>
-        </label>
-        <label>
-          MP4 file
-          <input id="file" type="file" accept="video/mp4,.mp4" required>
-        </label>
-        <button id="upload-btn" type="submit">Upload Video</button>
-      </form>
-      <progress id="progress" max="100" value="0" hidden></progress>
-      <p id="upload-status" class="status-text" aria-live="polite"></p>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Library</h2>
-        <span id="refresh-note" class="muted">Refreshes every 5s</span>
+  <!-- Main Container -->
+  <main class="main-layout">
+    <!-- HOME VIEW (YouTube browse feed) -->
+    <div id="home-view" class="view-section">
+      <!-- Filter Chips Bar -->
+      <div class="chips-container">
+        <div class="chips-list">
+          <button class="chip active" data-filter="all">All</button>
+          <button class="chip" data-filter="ready">Ready to Watch</button>
+          <button class="chip" data-filter="processing">Processing</button>
+          <button class="chip" data-filter="recent">Recently Added</button>
+        </div>
+        <div class="live-status-pill">
+          <span class="status-indicator-dot"></span>
+          <span id="sync-text">Live Sync</span>
+        </div>
       </div>
-      <p id="list-error" class="error" hidden></p>
-      <div id="grid" class="grid"></div>
-      <p id="empty" class="muted" hidden>No videos yet. Upload one above.</p>
-    </section>
+
+      <!-- Error message container -->
+      <div id="list-error" class="alert-banner alert-error" hidden></div>
+
+      <!-- Video Feed Grid -->
+      <div id="video-grid" class="video-grid"></div>
+
+      <!-- Empty State -->
+      <div id="empty-state" class="empty-state" hidden>
+        <div class="empty-icon-wrap">
+          <svg viewBox="0 0 24 24" width="56" height="56" fill="currentColor">
+            <path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4zM8 17H6v-2h2v2zm0-4H6v-2h2v2zm0-4H6V7h2v2zm10 8h-8v-2h8v2zm0-4h-8v-2h8v2zm0-4h-8V7h8v2z"/>
+          </svg>
+        </div>
+        <h3>No videos uploaded yet</h3>
+        <p>Upload your first MP4 video to watch it transcode on AWS in real time!</p>
+        <button id="empty-upload-btn" class="btn-primary">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+          </svg>
+          Upload Video Now
+        </button>
+      </div>
+    </div>
+
+    <!-- WATCH VIEW (YouTube Cinema Watch Experience) -->
+    <div id="watch-view" class="view-section watch-layout" hidden>
+      <!-- Left / Primary Column -->
+      <div class="watch-primary">
+        <div class="watch-nav-back">
+          <button id="back-to-browse-btn" class="btn-secondary back-btn">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+            </svg>
+            <span>Back to Browse</span>
+          </button>
+        </div>
+
+        <!-- Theater Player Box -->
+        <div class="player-wrapper">
+          <video id="watch-player" controls playsinline></video>
+          <!-- Floating resolution badge overlay -->
+          <div id="player-res-badge" class="player-overlay-badge">720p HD</div>
+        </div>
+
+        <!-- Video Metadata & Controls -->
+        <div class="watch-header">
+          <h1 id="watch-title" class="watch-video-title">Loading video...</h1>
+
+          <div class="watch-meta-row">
+            <!-- Channel Info -->
+            <div class="channel-info">
+              <div id="channel-avatar" class="channel-avatar">SF</div>
+              <div class="channel-text">
+                <div class="channel-name-row">
+                  <span id="channel-name" class="channel-name">StreamForge Studio</span>
+                  <svg class="verified-icon" viewBox="0 0 24 24" width="15" height="15" fill="currentColor" title="Verified Creator">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                  </svg>
+                </div>
+                <span class="channel-subs">124K subscribers</span>
+              </div>
+              <button id="subscribe-btn" class="subscribe-btn">Subscribe</button>
+            </div>
+
+            <!-- Action Pill Buttons (Like, Share, Download, Quality) -->
+            <div class="watch-actions">
+              <!-- Quality Switcher Pills -->
+              <div id="quality-selector-group" class="quality-selector-group" title="Select Resolution">
+                <span class="quality-label">Quality:</span>
+                <div id="quality-pills" class="quality-pills"></div>
+              </div>
+
+              <!-- Like / Dislike -->
+              <div class="action-pill-group">
+                <button id="like-btn" class="action-pill-btn" title="Like this video">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                    <path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/>
+                  </svg>
+                  <span id="like-counter">142</span>
+                </button>
+                <div class="action-pill-divider"></div>
+                <button id="dislike-btn" class="action-pill-btn" title="Dislike this video">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                    <path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.58-6.59c.37-.36.59-.86.59-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/>
+                  </svg>
+                </button>
+              </div>
+
+              <!-- Share -->
+              <button id="share-btn" class="action-pill-btn" title="Share link">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                  <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92 1.61 0 2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/>
+                </svg>
+                <span>Share</span>
+              </button>
+
+              <!-- Download -->
+              <a id="download-btn" class="action-pill-btn" target="_blank" download title="Download MP4">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                  <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
+                </svg>
+                <span>Download</span>
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Description Box -->
+        <div class="watch-description-card">
+          <div class="desc-stats-line">
+            <span id="desc-views" class="desc-stat-bold">2.4K views</span>
+            <span id="desc-date" class="desc-stat-bold">Today</span>
+            <span id="desc-status-badge" class="badge ready">Ready</span>
+            <span class="desc-tag">#StreamForge</span>
+            <span class="desc-tag">#AWSServerless</span>
+            <span class="desc-tag">#FFmpeg</span>
+          </div>
+
+          <div id="desc-body" class="desc-body">
+            <p id="desc-text">This video was uploaded and transcoded via the StreamForge automated pipeline with AWS S3, SQS, ECS Fargate, and DynamoDB.</p>
+            <div class="desc-details-grid">
+              <div class="detail-item">
+                <span class="detail-label">Video ID</span>
+                <span id="detail-video-id" class="detail-val font-mono">--</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Resolution Outputs</span>
+                <span id="detail-resolutions" class="detail-val">720p HD, 480p SD</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Transcode Engine</span>
+                <span class="detail-val">FFmpeg 7.1 / H.264 + AAC</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Hosting Infrastructure</span>
+                <span class="detail-val">LocalStack / AWS S3 + CloudFront</span>
+              </div>
+            </div>
+          </div>
+          <button id="toggle-desc-btn" class="toggle-desc-btn">Show more</button>
+        </div>
+
+        <!-- Interactive Comments Section -->
+        <section class="comments-section">
+          <div class="comments-header">
+            <h3>Comments <span id="comments-count" class="comments-count">3</span></h3>
+            <span class="sort-by muted">Sort by: Top comments</span>
+          </div>
+
+          <!-- Add comment input -->
+          <div class="add-comment-box">
+            <div class="comment-avatar">SF</div>
+            <div class="comment-input-wrap">
+              <input type="text" id="comment-input" placeholder="Add a public comment..." autocomplete="off">
+              <div class="comment-actions">
+                <button id="comment-cancel-btn" class="btn-text">Cancel</button>
+                <button id="comment-submit-btn" class="btn-primary-sm" disabled>Comment</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Comments Feed -->
+          <div id="comments-list" class="comments-list"></div>
+        </section>
+      </div>
+
+      <!-- Right / Secondary Column ("Up Next" / Video Queue) -->
+      <aside class="watch-sidebar">
+        <div class="sidebar-header">
+          <h3>Up next</h3>
+          <span class="muted font-sm">From your library</span>
+        </div>
+        <div id="sidebar-queue" class="sidebar-queue"></div>
+      </aside>
+    </div>
   </main>
 
-  <dialog id="player-modal">
-    <div class="modal-head">
-      <h3 id="player-title"></h3>
-      <button id="close-modal" class="icon-btn" aria-label="Close">&times;</button>
+  <!-- UPLOAD MODAL (Clean, YouTube Studio-style modal) -->
+  <dialog id="upload-modal" class="upload-dialog">
+    <div class="modal-container">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <div class="modal-icon-badge">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+            </svg>
+          </div>
+          <div>
+            <h2>Upload Video</h2>
+            <p class="modal-subtitle">Transcode to 720p & 480p with automated thumbnails</p>
+          </div>
+        </div>
+        <button id="close-modal-btn" class="close-btn" aria-label="Close modal">&times;</button>
+      </div>
+
+      <form id="upload-form" class="upload-form">
+        <!-- Drag and Drop Area -->
+        <div id="dropzone" class="dropzone">
+          <input type="file" id="file-input" accept="video/mp4,.mp4" required class="file-input-hidden">
+          <div class="dropzone-content">
+            <div class="dropzone-icon">
+              <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor">
+                <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+              </svg>
+            </div>
+            <p class="dropzone-primary-text">Select MP4 video to upload</p>
+            <p class="dropzone-sub-text">or drag and drop your file here</p>
+            <button type="button" id="browse-btn" class="btn-secondary">Browse File</button>
+            <div id="file-chosen-info" class="file-chosen-info" hidden>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/>
+              </svg>
+              <span id="chosen-filename" class="chosen-filename">sample.mp4</span>
+              <span id="chosen-filesize" class="chosen-filesize">0 MB</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Video Title Input -->
+        <div class="form-group">
+          <label for="title-input">Video Title</label>
+          <input type="text" id="title-input" maxlength="200" placeholder="e.g. 4K Drone Cinematic Reel" required>
+        </div>
+
+        <!-- Progress bar and status steps -->
+        <div id="upload-progress-wrap" class="upload-progress-wrap" hidden>
+          <div class="progress-labels">
+            <span id="progress-percent" class="font-bold">0%</span>
+            <span id="progress-step-text" class="muted font-sm">Preparing upload...</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <p id="upload-status" class="status-msg" aria-live="polite"></p>
+
+        <!-- Submit & Actions -->
+        <div class="modal-footer">
+          <button type="button" id="cancel-upload-btn" class="btn-secondary">Cancel</button>
+          <button type="submit" id="submit-upload-btn" class="btn-primary">
+            <span>Upload & Transcode</span>
+          </button>
+        </div>
+      </form>
     </div>
-    <video id="player" controls playsinline></video>
-    <div id="res-switch" class="res-switch"></div>
   </dialog>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
 
   <script src="config.js"></script>
   <script src="app.js"></script>
