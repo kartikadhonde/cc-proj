@@ -8,7 +8,7 @@
 # Env overrides: AWS_REGION (default ap-south-1), GITHUB_REPO (default kartikadhonde/video-platform)
 set -euo pipefail
 
-REGION="${AWS_REGION:-ap-south-1}"
+REGION="${AWS_REGION:-$(aws configure get region 2>/dev/null || echo us-east-1)}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TF_DIR="$ROOT/infra/terraform"
 # The git repo may live above this folder (e.g. a course repo containing video-platform/).
