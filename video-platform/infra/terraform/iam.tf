@@ -143,11 +143,14 @@ data "aws_iam_policy_document" "github_assume" {
       values   = ["sts.amazonaws.com"]
     }
 
-    # Any branch, PR or workflow in this one repository; nothing else.
+    # Any branch, PR or workflow in this one repository; supports both standard and ID-annotated claims
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:*"]
+      values = [
+        "repo:${var.github_repo}:*",
+        "repo:${split("/", var.github_repo)[0]}*${split("/", var.github_repo)[1]}*:*",
+      ]
     }
   }
 }
