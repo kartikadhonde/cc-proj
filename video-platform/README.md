@@ -59,7 +59,7 @@ Requires Docker Desktop.
 ```sh
 docker compose up --build
 ```
-Open http://localhost:3000 and upload a short MP4. Within a few seconds the card goes from `uploaded` to `processing` to `ready`.
+Open http://localhost:3001 and upload a short MP4. Within a few seconds the card goes from `uploaded` to `processing` to `ready`.
 
 - API: http://localhost:8000/docs
 - LocalStack: http://localhost:4566 (S3, SQS and DynamoDB)
