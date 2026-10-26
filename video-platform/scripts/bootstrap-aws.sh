@@ -20,6 +20,11 @@ REPO="${GITHUB_REPO:-${ORIGIN_REPO:-kartikadhonde/cc-proj}}"
 step() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
+# Ensure AWS CLI is found on Windows Git Bash
+if [ -d "/c/Program Files/Amazon/AWSCLIV2" ]; then
+  export PATH="$PATH:/c/Program Files/Amazon/AWSCLIV2"
+fi
+
 step "Checking tools and logins"
 for tool in aws terraform gh git; do
   command -v "$tool" >/dev/null || die "$tool is not installed (brew install $tool)"
@@ -69,7 +74,7 @@ step "terraform apply (about 5-10 minutes; type 'yes' when asked)"
 cd "$TF_DIR"
 terraform init -input=false -reconfigure \
   -backend-config="bucket=$STATE_BUCKET" -backend-config="region=$REGION" >/dev/null
-terraform apply
+terraform apply -auto-approve
 
 step "Setting GitHub repository variables"
 gh variable set AWS_REGION --repo "$REPO" --body "$REGION"
