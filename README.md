@@ -36,59 +36,54 @@ The platform includes a **modern YouTube-inspired cinema viewing interface**, fu
 
 ```mermaid
 flowchart TD
-  subgraph Clients["Clients & Edge Tier"]
+  subgraph Clients["Clients and Edge Tier"]
     User["Client Browser"]
-    CF["Amazon CloudFront CDN<br/>(Global Edge Network)"]
-    OAC["Origin Access Control (OAC)"]
+    CF["Amazon CloudFront CDN"]
+    OAC["Origin Access Control OAC"]
   end
 
-  subgraph Ingestion["Ingestion & Control Plane"]
-    ALB["Application Load Balancer (ALB)<br/>(Path Routing: /api/*)"]
-    API["FastAPI Control Service<br/>(ECS Fargate Service)"]
-    DDB[("DynamoDB Table<br/>(video-platform-videos)")]
-    S3_UP[("S3 Uploads Bucket<br/>(raw/{video_id}.mp4)")]
+  subgraph Ingestion["Ingestion and Control Plane"]
+    ALB["Application Load Balancer ALB"]
+    API["FastAPI Control Service"]
+    DDB[("DynamoDB Table: videos")]
+    S3_UP[("S3 Uploads Bucket: raw")]
   end
 
   subgraph AsyncProcessing["Asynchronous Processing Plane"]
-    SQS["SQS Video Jobs Queue<br/>(Visibility: 300s)"]
-    DLQ["SQS Dead-Letter Queue<br/>(Max Receive: 3)"]
+    SQS["SQS Video Jobs Queue"]
+    DLQ["SQS Dead-Letter Queue"]
     CW["CloudWatch Queue Alarms"]
-    AAS["Application Auto Scaling<br/>(0 to 3 Workers)"]
-    Worker["Transcoding Worker Pool<br/>(ECS Fargate Spot + FFmpeg 7.1)"]
+    AAS["Application Auto Scaling"]
+    Worker["Transcoding Worker Fleet: Fargate Spot"]
   end
 
-  subgraph StorageDelivery["Storage & Delivery Plane"]
-    S3_PR[("S3 Processed Bucket<br/>(720p, 480p, Thumbnails)")]
-    S3_FE[("S3 Frontend Static Bucket<br/>(HTML, CSS, JS)")]
+  subgraph StorageDelivery["Storage and Delivery Plane"]
+    S3_PR[("S3 Processed Bucket: 720p 480p")]
+    S3_FE[("S3 Frontend Static Bucket")]
   end
 
-  %% Client Requests
-  User -->|1. HTTPS Request| CF
-  CF -->|2a. Route /*| S3_FE
-  CF -->|2b. Route /api/*| ALB
-  CF -->|2c. Route /processed/*| OAC
+  User -->|"1. HTTPS Request"| CF
+  CF -->|"2a. Route Default Static"| S3_FE
+  CF -->|"2b. Route API Requests"| ALB
+  CF -->|"2c. Route Media Requests"| OAC
   OAC --> S3_PR
 
-  %% Upload Ingress
   ALB --> API
-  API -->|3. Register Metadata| DDB
-  API -.->|4. Presigned S3 PUT URL| User
-  User -->|5. Direct PUT upload| S3_UP
+  API -->|"3. Register Metadata"| DDB
+  API -.->|"4. Presigned S3 PUT URL"| User
+  User -->|"5. Direct PUT Upload"| S3_UP
 
-  %% Event Queue & Worker
-  S3_UP -->|6. s3:ObjectCreated:*| SQS
-  SQS -->|Failed 3x| DLQ
-  SQS -.->|Backlog Metric| CW
-  CW -->|Trigger Scaling| AAS
-  AAS -->|Scale Out/In (0-3)| Worker
-  SQS -->|7. Long-Poll Receive| Worker
+  S3_UP -->|"6. ObjectCreated Event"| SQS
+  SQS -->|"Failed 3x"| DLQ
+  SQS -.->|"Backlog Metric"| CW
+  CW -->|"Trigger Alarm"| AAS
+  AAS -->|"Scale 0 to 3 Workers"| Worker
+  SQS -->|"7. Long-Poll Receive"| Worker
 
-  %% Transcoding & Completion
-  Worker -->|8. Fetch Raw Video| S3_UP
-  Worker -->|9. FFmpeg Transcode| Worker
-  Worker -->|10. Upload 720p, 480p, thumb| S3_PR
-  Worker -->|11. Update Status: ready| DDB
-  Worker -->|12. Delete SQS Message| SQS
+  Worker -->|"8. Fetch Raw Video"| S3_UP
+  Worker -->|"9. Encode 720p 480p and Thumb"| S3_PR
+  Worker -->|"10. Update Status Ready"| DDB
+  Worker -->|"11. Delete SQS Message"| SQS
 ```
 
 ---
