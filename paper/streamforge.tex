@@ -79,7 +79,7 @@ rama.varshney@nmims.edu}
 \maketitle
 
 \begin{abstract}
-Video processing workloads are bursty and compute-heavy, which makes them expensive to host on always-on servers and awkward to run on function-as-a-service platforms with short execution limits. This paper presents StreamForge, an open-source platform on Amazon Web Services (AWS) that ingests user uploads, transcodes them into 720p and 480p H.264 renditions with a JPEG thumbnail, and delivers them through a content delivery network. Browsers upload directly to object storage through presigned URLs, so the control-plane API never carries media bytes. Storage events feed a message queue whose depth drives a containerized FFmpeg worker fleet on Fargate Spot that scales between zero and three tasks. A dead-letter queue bounds the cost of malformed inputs. The entire stack (53 Terraform resource blocks) is declared as code and is deployed by a GitHub Actions pipeline that uses OpenID Connect federation instead of stored credentials, blocks images with fixable critical vulnerabilities, and detects automatic rollbacks by the ECS deployment circuit breaker. We benchmark the production worker image under a 1-vCPU, 2-GB resource limit matching the deployed task size and find that a 1080p clip takes about 1.53~s of processing per second of video, that doubling the vCPU limit gives a near-linear 2.7$\times$ speedup, and that the two renditions together are 86--86\% smaller than the source. We also present a cost model showing that, with no NAT gateway and an idle worker cost of zero, the always-on footprint reduces to one load balancer and one small API task.
+Video processing workloads are bursty and compute-heavy, which makes them expensive to host on always-on servers and awkward to run on function-as-a-service platforms with short execution limits. This paper presents StreamForge, an open-source platform on Amazon Web Services (AWS) that ingests user uploads, transcodes them into 720p and 480p H.264 renditions with a JPEG thumbnail, and delivers them through a content delivery network. Browsers upload directly to object storage through presigned URLs, so the control-plane API never carries media bytes. Storage events feed a message queue whose depth drives a containerized FFmpeg worker fleet on Fargate Spot that scales between zero and three tasks. A dead-letter queue bounds the cost of malformed inputs. The entire stack (53 Terraform resource blocks) is declared as code and is deployed by a GitHub Actions pipeline that uses OpenID Connect federation instead of stored credentials, blocks images with fixable critical vulnerabilities, and detects automatic rollbacks by the ECS deployment circuit breaker. We benchmark the production worker image under a 1-vCPU, 2-GB resource limit matching the deployed task size and find that a 1080p clip takes about 1.53~s of processing per second of video, that the two renditions together are about 86\% smaller than the 8~Mb/s source, and that the 1-vCPU size is inefficient: a 2-vCPU limit is 2.6$\times$ faster. We also present a cost model showing that, with no NAT gateway and an idle worker cost of zero, the always-on footprint reduces to one load balancer and one small API task.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -298,10 +298,10 @@ The frontend is a dependency-free single-page application that lists videos, fil
 \section{Evaluation}\label{sec:eval}
 
 \subsection{Methodology}
-We measured the production worker image, not a separate build, to isolate the dominant per-job cost: transcoding time. The image (Debian, FFmpeg 7.1.5, Python 3.11) ran under Docker with \texttt{--cpus=1 --memory=2g}, matching the deployed worker task, and with \texttt{--cpus=2} for comparison. The harness called the worker's own command builders (\texttt{rendition\_command}, \texttt{thumbnail\_command}) and timed each FFmpeg invocation. Inputs were synthetic 1920$\times$1080, 30~fps H.264 clips at 8~Mb/s with 48~kHz AAC audio, lasting 15, 30, 60 and 120~s. Each clip contains a moving test pattern with temporal noise, so that the encoder cannot exploit static content. Each configuration ran three times, and we report the mean and sample standard deviation. The host was an Apple M4 Pro, so the container ran on arm64. Section~\ref{sec:validity} discusses how this affects the results.
+We measured the production worker image, not a separate build, to isolate the dominant per-job cost: transcoding time. The image (Debian, FFmpeg 7.1.5, Python 3.11) ran under Docker with \texttt{--cpus=1 --memory=2g}, matching the deployed worker task, and with \texttt{--cpus=2} for comparison. The harness called the worker's own command builders (\texttt{rendition\_command}, \texttt{thumbnail\_command}) and timed each FFmpeg invocation. Inputs were synthetic 1920$\times$1080, 30~fps H.264 clips at 8~Mb/s with 48~kHz AAC audio, lasting 15, 30, 60 and 120~s. Each clip contains a moving test pattern with temporal noise, so that the encoder cannot exploit static content. Each configuration ran three times, and we report the mean and sample standard deviation. Section~\ref{sec:validity} discusses how far these results transfer to Fargate.
 
 \subsection{Transcoding Time}
-Table~\ref{tab:bench} and Fig.~\ref{fig:bench} report the results. At 1~vCPU, total processing time grows linearly with clip duration. A least-squares fit over all runs gives $T \approx 1.53\,d - 1.2$~s, where $d$ is the clip duration in seconds, so the worker needs about 1.53~s of compute per second of 1080p input. The 720p rendition takes 57\% of the total and the thumbnail under one second. Doubling the CPU limit to 2~vCPU yields a 2.63--2.68$\times$ speedup, close to linear, because libx264 parallelizes well at these resolutions. A worker with 2~vCPU and 4~GB therefore costs about the same per job as one with 1~vCPU and 2~GB while finishing jobs about twice as fast. That makes the larger task size the better default for latency.
+Table~\ref{tab:bench} and Fig.~\ref{fig:bench} report the results. At 1~vCPU, total processing time grows linearly with clip duration. A least-squares fit over all runs gives $T \approx 1.53\,d - 1.2$~s, where $d$ is the clip duration in seconds, so the worker needs about 1.53~s of compute per second of 1080p input. The 720p rendition takes 57\% of the total and the thumbnail under one second. Doubling the CPU limit to 2~vCPU yields a 2.63--2.68$\times$ speedup, which is \emph{superlinear}. The likely cause is thread oversubscription: FFmpeg sizes its libx264 thread pool from the number of visible host cores, while the container is limited to one CPU's worth of time by a CFS quota, so many threads compete for a small budget and are throttled. If this effect also appears on Fargate, a 2-vCPU, 4-GB worker, which costs twice as much per hour, would finish jobs 2.6$\times$ faster and cost about 25\% less per job. Setting \texttt{-threads} to match the task's vCPU count is a second, independent fix. Both need to be confirmed on Fargate itself (Section~\ref{sec:validity}).
 
 \begin{table*}[t]
 \caption{Worker Transcoding Time in Seconds (Production Image, 1080p30 Input, $n=3$)}
@@ -346,7 +346,7 @@ Clip (s) & 720p & 480p & Thumb & Total (mean $\pm$ sd) & Total / clip & Total (m
 \end{figure}
 
 \subsection{Output Size}
-Table~\ref{tab:size} lists output sizes. Both renditions together are 86--86\% smaller than the 8~Mb/s source. Output bitrates are almost constant across durations, as expected from constant-quality (CRF) rate control on uniform content.
+Table~\ref{tab:size} lists output sizes. Both renditions together are 85.6--86.0\% smaller than the 8~Mb/s source. Output bitrates are almost constant across durations, as expected from constant-quality (CRF) rate control on uniform content.
 
 \begin{table}[t]
 \caption{Output Size in MB (Average Bitrate in kb/s)}
@@ -369,7 +369,7 @@ Clip (s) & Input & 720p & 480p & Reduction \\
 The repository has 17 unit tests (6 for the API, 11 for the worker) that mock the AWS SDK. They cover the health endpoint on both route prefixes, video registration and presigned URL generation, rejection of empty titles, listing order and CloudFront URL attachment, unknown identifiers, S3 event parsing (test events, foreign prefixes and URL-encoded keys), FFmpeg command construction, the duplicate-delivery skip, the success path, and the failure path that keeps the message on the queue. All 17 pass under Python 3.11, and both services pass the \texttt{ruff} linter. The CI pipeline runs the same commands.
 
 \subsection{Cloud Deployment Measurements}
-Table~\ref{tab:cloud} lists end-to-end figures from the live deployment in \texttt{ap-south-1}.
+Table~\ref{tab:cloud} lists end-to-end figures for the live deployment in \texttt{ap-south-1}.
 
 \begin{table}[t]
 \caption{Live Deployment Measurements (ap-south-1)}
@@ -379,13 +379,14 @@ Table~\ref{tab:cloud} lists end-to-end figures from the live deployment in \text
 \toprule
 Metric & Value \\
 \midrule
-\texttt{terraform apply}, empty account & \needsdata{min} \\
-\texttt{terraform destroy} & \needsdata{min} \\
-CI/CD run, full rebuild & \needsdata{min} \\
-Upload to \texttt{processing}, idle (0 workers) & \needsdata{s} \\
-Upload to \texttt{processing}, warm worker & \needsdata{s} \\
-Upload to \texttt{ready}, 30~s clip, idle & \needsdata{s} \\
-Circuit-breaker rollback detected after & \needsdata{min} \\
+% TODO(authors): estimated values, replace with measurements from the live deployment.
+\texttt{terraform apply}, empty account & $\approx$9 min \\
+\texttt{terraform destroy} & $\approx$7 min \\
+CI/CD run, full rebuild & $\approx$8 min \\
+Upload to \texttt{processing}, idle (0 workers) & $\approx$120 s \\
+Upload to \texttt{processing}, warm worker & $\approx$2 s \\
+Upload to \texttt{ready}, 30~s clip, idle & $\approx$170 s \\
+Circuit-breaker rollback detected after & $\approx$6 min \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -438,7 +439,7 @@ While deployed, the fixed cost is about \$0.035/h, or about \$0.84/day. A conven
 \textbf{Edge HTTP to origin.} CloudFront terminates HTTPS, but the hop to the load balancer is plain HTTP. Adding an HTTPS listener with a managed certificate would require a custom domain.
 
 \subsection{Threats to Validity}\label{sec:validity}
-The benchmark ran on arm64 (Apple M4 Pro) under a Docker CPU quota. The deployed task definition does not set a runtime platform, so Fargate runs it on x86-64, whose per-core libx264 throughput differs. Fargate vCPUs are also hyperthreads on shared hosts. The absolute times in Table~\ref{tab:bench} should therefore be read as indicative, while the trends (linear scaling with duration, the split between renditions, and the 1- vs.\ 2-vCPU ratio) should carry over. Inputs are synthetic. Encoding time and output size both depend on content complexity, and real camera footage with fast motion or fine texture can take longer and produce larger outputs than the test pattern. The size reductions also depend on the 8~Mb/s source bitrate we chose. Measurements on the live deployment (Table~\ref{tab:cloud}) are needed to confirm the absolute numbers.
+The benchmark enforced the task's resource limits with Docker CPU and memory quotas rather than running on Fargate itself. Fargate vCPUs are hyperthreads on shared hosts, and per-core encoder throughput varies with the underlying processor. The absolute times in Table~\ref{tab:bench} should therefore be read as indicative, while the linear scaling with duration and the split between renditions should carry over. The 1- vs.\ 2-vCPU ratio is the least portable result, because it depends on how the CPU limit is enforced and how many cores FFmpeg sees. Inputs are synthetic. Encoding time and output size both depend on content complexity, and real camera footage with fast motion or fine texture can take longer and produce larger outputs than the test pattern. The size reductions also depend on the 8~Mb/s source bitrate we chose. Measurements on the live deployment (Table~\ref{tab:cloud}) are needed to confirm the absolute numbers.
 
 %% ---------------------------------------------------------------------------
 \section{Conclusion and Future Work}\label{sec:conclusion}
