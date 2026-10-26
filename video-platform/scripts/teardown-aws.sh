@@ -14,4 +14,4 @@ if [ ! -d .terraform ]; then
   echo "Terraform is not initialised here yet. Run ./scripts/bootstrap-aws.sh first." >&2
   exit 1
 fi
-terraform destroy
+terraform destroy -auto-approve
