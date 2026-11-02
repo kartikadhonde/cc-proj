@@ -21,20 +21,19 @@ shutting_down = False
 
 
 def handle_sigterm(signum, frame):
+    """Graceful shutdown handler: allows in-progress transcode to finish before Fargate Spot stops."""
     global shutting_down
     logger.info("received signal %s, finishing current job then exiting", signum)
     shutting_down = True
 
 
 def utc_now() -> str:
+    """Return ISO 8601 UTC timestamp string."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def parse_message(body: str) -> list[str]:
-    """Return the raw/ object keys referenced by an S3 event notification body.
-
-    Test events (sent by S3 when the notification is configured) yield no keys.
-    """
+    """Parse S3 Event Notification from SQS body; filter for ObjectCreated on raw/*.mp4 keys."""
     payload = json.loads(body)
     if payload.get("Event") == "s3:TestEvent":
         return []
@@ -42,6 +41,7 @@ def parse_message(body: str) -> list[str]:
     for record in payload.get("Records", []):
         if not record.get("eventName", "").startswith("ObjectCreated"):
             continue
+        # Unquote key names (e.g., spaces or special characters encoded by S3)
         key = unquote_plus(record["s3"]["object"]["key"])
         if key.startswith("raw/") and key.endswith(".mp4"):
             keys.append(key)
@@ -49,10 +49,12 @@ def parse_message(body: str) -> list[str]:
 
 
 def video_id_from_key(key: str) -> str:
+    """Extract UUID video_id from S3 object key (e.g. raw/<video_id>.mp4)."""
     return Path(key).stem
 
 
 def output_keys(video_id: str) -> dict[str, str]:
+    """Define destination S3 keys in the processed bucket for all output renditions."""
     return {
         "720p": f"processed/{video_id}/720p.mp4",
         "480p": f"processed/{video_id}/480p.mp4",
@@ -68,6 +70,7 @@ class Worker:
         self.table = table or boto3.resource("dynamodb", **kw).Table(settings.ddb_table)
 
     def poll_once(self) -> None:
+        """Poll SQS using 20s Long Polling to minimize empty receive API calls and costs."""
         response = self.sqs.receive_message(
             QueueUrl=settings.sqs_queue_url,
             MaxNumberOfMessages=1,
@@ -77,6 +80,7 @@ class Worker:
             self.handle_message(message)
 
     def handle_message(self, message: dict) -> None:
+        """Process SQS message; only delete receipt handle after successful database commit."""
         receipt = message["ReceiptHandle"]
         try:
             keys = parse_message(message["Body"])
@@ -95,15 +99,20 @@ class Worker:
             for key in keys:
                 self.mark_failed(video_id_from_key(key), str(exc))
             return
+        # Delete from SQS only when transcoding & DynamoDB updates succeeded
         self.delete(receipt)
 
     def process(self, source_key: str) -> None:
+        """Download raw video, execute FFmpeg renditions, upload outputs, and update DynamoDB."""
         video_id = video_id_from_key(source_key)
+
+        # 1. Idempotency guard: skip if video was already marked ready by a previous run
         item = self.table.get_item(Key={"video_id": video_id}).get("Item")
         if item and item.get("status") == "ready":
             logger.info("video %s already ready, skipping duplicate delivery", video_id)
             return
 
+        # 2. Atomic DynamoDB state transition: set status to 'processing' and increment attempts
         self.table.update_item(
             Key={"video_id": video_id},
             UpdateExpression=(
@@ -120,10 +129,14 @@ class Worker:
         job_dir = Path(settings.work_dir) / video_id
         job_dir.mkdir(parents=True, exist_ok=True)
         try:
+            # 3. Download raw MP4 from uploads bucket
             input_path = str(job_dir / "input.mp4")
             self.s3.download_file(settings.uploads_bucket, source_key, input_path)
+
+            # 4. Transcode to 720p, 480p, and extract thumbnail
             files = transcoder.transcode(input_path, str(job_dir), settings.ffmpeg_timeout_seconds)
 
+            # 5. Upload renditions to processed S3 bucket with correct Content-Type headers
             keys = output_keys(video_id)
             for name, path in files.items():
                 content_type = "image/jpeg" if name == "thumbnail" else "video/mp4"
@@ -132,6 +145,7 @@ class Worker:
                     ExtraArgs={"ContentType": content_type},
                 )  # fmt: skip
 
+            # 6. Atomic DynamoDB state transition: mark 'ready' with CloudFront output keys
             self.table.update_item(
                 Key={"video_id": video_id},
                 UpdateExpression="SET #s = :s, outputs = :o, thumbnail_key = :t, updated_at = :u",
@@ -145,9 +159,11 @@ class Worker:
             )
             logger.info("video %s ready", video_id)
         finally:
+            # 7. Clean up temporary scratch files from container disk
             shutil.rmtree(job_dir, ignore_errors=True)
 
     def mark_failed(self, video_id: str, error: str) -> None:
+        """Record transcode failure reason in DynamoDB for frontend error display."""
         try:
             self.table.update_item(
                 Key={"video_id": video_id},
@@ -159,10 +175,12 @@ class Worker:
             logger.exception("could not mark video %s as failed", video_id)
 
     def delete(self, receipt: str) -> None:
+        """Acknowledge and remove message from SQS queue."""
         self.sqs.delete_message(QueueUrl=settings.sqs_queue_url, ReceiptHandle=receipt)
 
 
 def main() -> None:
+    # Register graceful shutdown signals (SIGTERM from ECS/Fargate Spot, SIGINT from Ctrl+C)
     signal.signal(signal.SIGTERM, handle_sigterm)
     signal.signal(signal.SIGINT, handle_sigterm)
     if not settings.sqs_queue_url:

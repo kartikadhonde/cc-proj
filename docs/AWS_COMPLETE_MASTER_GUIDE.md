@@ -400,3 +400,4 @@ This live demonstration protocol consistently wows professors, interviewers, and
 
 #### Q12: How does GitHub Actions authenticate to AWS without static access keys?
 **Answer:** Through OpenID Connect (OIDC) identity federation. When a GitHub Actions workflow runs, it requests an OIDC token from GitHub. The `aws-actions/configure-aws-credentials` action exchanges this token with AWS Security Token Service (STS) using `sts:AssumeRoleWithWebIdentity`. AWS validates the token against our IAM trust policy and mints temporary 15-minute credentials. No permanent AWS access keys are stored in GitHub.
+

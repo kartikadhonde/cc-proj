@@ -162,12 +162,14 @@ async function api(path, options = {}) {
   return response.json();
 }
 
-// Presigned S3 Upload via XMLHttpRequest
+// Presigned S3 Upload: uploads raw binary directly to S3 via XMLHttpRequest
+// (XMLHttpRequest is chosen over fetch() to support native upload progress events: e.loaded / e.total)
 function putToS3(url, file, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", url);
     xhr.setRequestHeader("Content-Type", "video/mp4");
+    // Track byte-level upload progress for real-time progress bar rendering
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
     };
@@ -743,6 +745,7 @@ function setUploadStatus(text, isError = false) {
   uploadStatus.classList.toggle("error", isError);
 }
 
+// Form submit handler: executes the 3-step asynchronous video upload pipeline
 uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const title = titleInput.value.trim();
@@ -756,12 +759,14 @@ uploadForm.addEventListener("submit", async (event) => {
   progressStepText.textContent = "Step 1/3: Registering video metadata...";
 
   try {
+    // Step 1: Request S3 presigned PUT URL and record metadata in DynamoDB
     setUploadStatus("Registering video with API...");
     const { video_id, upload_url } = await api("/videos", {
       method: "POST",
       body: JSON.stringify({ title }),
     });
 
+    // Step 2: Stream raw video binary directly to S3 (bypassing the API server)
     progressStepText.textContent = "Step 2/3: Uploading directly to S3...";
     setUploadStatus("Uploading file to S3...");
 
@@ -771,6 +776,7 @@ uploadForm.addEventListener("submit", async (event) => {
       progressStepText.textContent = `Step 2/3: Uploading to S3... ${pct}%`;
     });
 
+    // Step 3: S3 emits ObjectCreated event -> SQS triggers ECS Fargate transcode worker
     progressBarFill.style.width = "100%";
     progressPercent.textContent = "100%";
     progressStepText.textContent = "Step 3/3: Transcoding queued via AWS SQS!";
@@ -818,6 +824,7 @@ clearSearchBtn.addEventListener("click", () => {
 // Data Polling & Deep Link Handling
 // ==========================================================================
 
+// Periodic polling loop: queries /api/videos to refresh video cards and status badges
 let lastVideosJson = "";
 
 async function refresh() {
@@ -826,6 +833,7 @@ async function refresh() {
     listError.hidden = true;
     allVideos = videos;
 
+    // Only re-render DOM if video list data or status has actually changed
     const snapshot = JSON.stringify(videos);
     if (snapshot !== lastVideosJson) {
       lastVideosJson = snapshot;

@@ -241,3 +241,4 @@ def _format_inline_text(paragraph, text, italic=False):
 
 if __name__ == '__main__':
     generate_member_4_docx()
+

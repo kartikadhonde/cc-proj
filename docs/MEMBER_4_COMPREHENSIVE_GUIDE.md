@@ -511,3 +511,4 @@ This workflow runs on every `git push` to `main`:
 
 #### Q12: Why did you scale video with `scale=-2:{height}` instead of `-1:{height}`?
 **Answer:** H.264 video encoding algorithms operate on 2x2 or 16x16 pixel macroblocks and require both width and height to be even numbers. Using `-1` can produce an odd width (e.g., 853x480), which causes FFmpeg to exit with an error. Using `-2` automatically computes proportional width while rounding to the nearest even number.
+
