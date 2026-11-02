@@ -1,4 +1,4 @@
-"""Boto3 helpers: DynamoDB CRUD and S3 presigned upload URLs."""
+"""AWS helpers: talks to DynamoDB database and generates S3 upload links."""
 
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -13,7 +13,7 @@ from app.config import settings
 
 @lru_cache
 def _ddb_table():
-    """Lazily initialize and cache the Boto3 DynamoDB table resource."""
+    # Connect to the DynamoDB table (cached so we don't reconnect on every request)
     resource = boto3.resource(
         "dynamodb", region_name=settings.aws_region, endpoint_url=settings.aws_endpoint_url
     )
@@ -22,9 +22,7 @@ def _ddb_table():
 
 @lru_cache
 def _presign_client():
-    """S3 client configured with SigV4 and regional virtual-hosted addressing for browser CORS."""
-    # Presigned URLs are opened directly by the browser. On AWS we use regional virtual-hosted
-    # addressing (e.g. bucket.s3.region.amazonaws.com) to prevent HTTP 307 redirects that fail CORS.
+    # Setup S3 connection with correct endpoint format so browsers can upload directly without errors
     if settings.s3_public_endpoint_url or settings.aws_endpoint_url:
         endpoint = settings.s3_public_endpoint_url or settings.aws_endpoint_url
         addressing = "path"
@@ -40,12 +38,12 @@ def _presign_client():
 
 
 def utc_now() -> str:
-    """Return ISO 8601 UTC timestamp string."""
+    # Standard UTC timestamp string
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _plain(value: Any) -> Any:
-    """Convert DynamoDB Decimals into ints/floats so items serialize cleanly to JSON."""
+    # DynamoDB stores numbers in a special 'Decimal' format; convert them to normal ints/floats for JSON
     if isinstance(value, Decimal):
         return int(value) if value == value.to_integral_value() else float(value)
     if isinstance(value, dict):
@@ -56,19 +54,19 @@ def _plain(value: Any) -> Any:
 
 
 def put_video(item: dict[str, Any]) -> None:
-    """Store or overwrite a video record in DynamoDB."""
+    # Save a video's details into the DynamoDB database
     _ddb_table().put_item(Item=item)
 
 
 def get_video(video_id: str) -> dict[str, Any] | None:
-    """Fetch video item by partition key 'video_id'."""
+    # Fetch a single video's details from the DynamoDB database
     response = _ddb_table().get_item(Key={"video_id": video_id})
     item = response.get("Item")
     return _plain(item) if item else None
 
 
 def list_videos() -> list[dict[str, Any]]:
-    """Scan DynamoDB table with automatic pagination via LastEvaluatedKey."""
+    # Read all videos from DynamoDB, handling pagination if there are many videos
     table = _ddb_table()
     items: list[dict[str, Any]] = []
     kwargs: dict[str, Any] = {}
@@ -81,7 +79,7 @@ def list_videos() -> list[dict[str, Any]]:
 
 
 def presigned_upload_url(key: str) -> str:
-    """Generate a 15-minute presigned PUT URL allowing the browser to upload directly to S3."""
+    # Generate a temporary 15-minute link that lets the user upload an MP4 directly to S3
     return _presign_client().generate_presigned_url(
         "put_object",
         Params={"Bucket": settings.uploads_bucket, "Key": key, "ContentType": "video/mp4"},

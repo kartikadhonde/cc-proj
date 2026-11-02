@@ -162,14 +162,14 @@ async function api(path, options = {}) {
   return response.json();
 }
 
-// Presigned S3 Upload: uploads raw binary directly to S3 via XMLHttpRequest
-// (XMLHttpRequest is chosen over fetch() to support native upload progress events: e.loaded / e.total)
+// Upload the video file directly to AWS S3 storage
+// (We use XMLHttpRequest instead of fetch so we can show the live upload progress bar 0% to 100%)
 function putToS3(url, file, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", url);
     xhr.setRequestHeader("Content-Type", "video/mp4");
-    // Track byte-level upload progress for real-time progress bar rendering
+    // Calculate upload percentage as bytes are sent to S3
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
     };
@@ -745,7 +745,7 @@ function setUploadStatus(text, isError = false) {
   uploadStatus.classList.toggle("error", isError);
 }
 
-// Form submit handler: executes the 3-step asynchronous video upload pipeline
+// When user submits the upload form, run the 3 upload steps:
 uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const title = titleInput.value.trim();
@@ -759,14 +759,14 @@ uploadForm.addEventListener("submit", async (event) => {
   progressStepText.textContent = "Step 1/3: Registering video metadata...";
 
   try {
-    // Step 1: Request S3 presigned PUT URL and record metadata in DynamoDB
+    // Step 1: Tell backend about the new video and get a temporary S3 upload link
     setUploadStatus("Registering video with API...");
     const { video_id, upload_url } = await api("/videos", {
       method: "POST",
       body: JSON.stringify({ title }),
     });
 
-    // Step 2: Stream raw video binary directly to S3 (bypassing the API server)
+    // Step 2: Send the video directly to S3 storage (so our backend server doesn't lag)
     progressStepText.textContent = "Step 2/3: Uploading directly to S3...";
     setUploadStatus("Uploading file to S3...");
 
@@ -776,7 +776,7 @@ uploadForm.addEventListener("submit", async (event) => {
       progressStepText.textContent = `Step 2/3: Uploading to S3... ${pct}%`;
     });
 
-    // Step 3: S3 emits ObjectCreated event -> SQS triggers ECS Fargate transcode worker
+    // Step 3: S3 tells our AWS queue (SQS), and the background worker starts converting
     progressBarFill.style.width = "100%";
     progressPercent.textContent = "100%";
     progressStepText.textContent = "Step 3/3: Transcoding queued via AWS SQS!";
@@ -824,7 +824,7 @@ clearSearchBtn.addEventListener("click", () => {
 // Data Polling & Deep Link Handling
 // ==========================================================================
 
-// Periodic polling loop: queries /api/videos to refresh video cards and status badges
+// Check for video updates every 5 seconds (e.g. when video changes from 'processing' to 'ready')
 let lastVideosJson = "";
 
 async function refresh() {

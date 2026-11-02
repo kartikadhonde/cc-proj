@@ -1,4 +1,4 @@
-"""SQS long-polling worker: transcodes uploaded videos and extracts thumbnails."""
+"""Background worker: listens for uploaded videos in SQS, converts them, and saves the output."""
 
 import json
 import logging
@@ -17,23 +17,24 @@ from worker.config import settings
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("worker")
 
+# Flag to stop the worker loop gracefully
 shutting_down = False
 
 
 def handle_sigterm(signum, frame):
-    """Graceful shutdown handler: allows in-progress transcode to finish before Fargate Spot stops."""
+    # When AWS tells the server to shut down, don't crash mid-video - finish the current video first
     global shutting_down
     logger.info("received signal %s, finishing current job then exiting", signum)
     shutting_down = True
 
 
 def utc_now() -> str:
-    """Return ISO 8601 UTC timestamp string."""
+    # Get current time in standard UTC format (e.g. 2026-11-02T10:00:00Z)
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def parse_message(body: str) -> list[str]:
-    """Parse S3 Event Notification from SQS body; filter for ObjectCreated on raw/*.mp4 keys."""
+    # Read the SQS message and check if it's a new video upload from S3 (ignores test pings)
     payload = json.loads(body)
     if payload.get("Event") == "s3:TestEvent":
         return []
@@ -41,20 +42,21 @@ def parse_message(body: str) -> list[str]:
     for record in payload.get("Records", []):
         if not record.get("eventName", "").startswith("ObjectCreated"):
             continue
-        # Unquote key names (e.g., spaces or special characters encoded by S3)
+        # Decode special characters in the filename (e.g. spaces or brackets)
         key = unquote_plus(record["s3"]["object"]["key"])
+        # Only process MP4 files uploaded to the "raw/" folder
         if key.startswith("raw/") and key.endswith(".mp4"):
             keys.append(key)
     return keys
 
 
 def video_id_from_key(key: str) -> str:
-    """Extract UUID video_id from S3 object key (e.g. raw/<video_id>.mp4)."""
+    # Grab the unique video ID from the file path (e.g. "raw/abc-123.mp4" -> "abc-123")
     return Path(key).stem
 
 
 def output_keys(video_id: str) -> dict[str, str]:
-    """Define destination S3 keys in the processed bucket for all output renditions."""
+    # File paths where the converted videos and thumbnail will be stored in S3
     return {
         "720p": f"processed/{video_id}/720p.mp4",
         "480p": f"processed/{video_id}/480p.mp4",
@@ -64,13 +66,14 @@ def output_keys(video_id: str) -> dict[str, str]:
 
 class Worker:
     def __init__(self, sqs=None, s3=None, table=None):
+        # Connect to AWS services (SQS queue, S3 storage, and DynamoDB database)
         kw = {"region_name": settings.aws_region, "endpoint_url": settings.aws_endpoint_url}
         self.sqs = sqs or boto3.client("sqs", **kw)
         self.s3 = s3 or boto3.client("s3", **kw)
         self.table = table or boto3.resource("dynamodb", **kw).Table(settings.ddb_table)
 
     def poll_once(self) -> None:
-        """Poll SQS using 20s Long Polling to minimize empty receive API calls and costs."""
+        # Wait up to 20 seconds for a new video job to arrive (long polling saves money by reducing empty checks)
         response = self.sqs.receive_message(
             QueueUrl=settings.sqs_queue_url,
             MaxNumberOfMessages=1,
@@ -80,11 +83,12 @@ class Worker:
             self.handle_message(message)
 
     def handle_message(self, message: dict) -> None:
-        """Process SQS message; only delete receipt handle after successful database commit."""
+        # Take a job from the queue, process it, and only remove it if everything succeeds
         receipt = message["ReceiptHandle"]
         try:
             keys = parse_message(message["Body"])
         except (json.JSONDecodeError, KeyError, TypeError):
+            # If message is corrupted/garbage, drop it so it doesn't get stuck forever
             logger.warning("discarding malformed message %s", message.get("MessageId"))
             self.delete(receipt)
             return
@@ -92,27 +96,27 @@ class Worker:
         try:
             for key in keys:
                 self.process(key)
-        except Exception as exc:  # any failure must be recorded, not crash the loop
-            # Leave the message on the queue: SQS redelivers after the visibility timeout
-            # and moves it to the DLQ after maxReceiveCount attempts.
+        except Exception as exc:
+            # If conversion fails, mark as failed in the database and leave it in SQS for automatic retry
             logger.exception("job failed for %s", keys)
             for key in keys:
                 self.mark_failed(video_id_from_key(key), str(exc))
             return
-        # Delete from SQS only when transcoding & DynamoDB updates succeeded
+
+        # Done! Now safely delete the message from the queue
         self.delete(receipt)
 
     def process(self, source_key: str) -> None:
-        """Download raw video, execute FFmpeg renditions, upload outputs, and update DynamoDB."""
+        # The main pipeline: download -> convert -> upload -> update database
         video_id = video_id_from_key(source_key)
 
-        # 1. Idempotency guard: skip if video was already marked ready by a previous run
+        # Step 1: If video was already converted earlier, skip it (handles duplicate messages)
         item = self.table.get_item(Key={"video_id": video_id}).get("Item")
         if item and item.get("status") == "ready":
             logger.info("video %s already ready, skipping duplicate delivery", video_id)
             return
 
-        # 2. Atomic DynamoDB state transition: set status to 'processing' and increment attempts
+        # Step 2: Update status to "processing" in DynamoDB so frontend shows a loading spinner
         self.table.update_item(
             Key={"video_id": video_id},
             UpdateExpression=(
@@ -126,17 +130,18 @@ class Worker:
         )  # fmt: skip
         logger.info("processing video %s", video_id)
 
+        # Temporary folder on the server to work with the video files
         job_dir = Path(settings.work_dir) / video_id
         job_dir.mkdir(parents=True, exist_ok=True)
         try:
-            # 3. Download raw MP4 from uploads bucket
+            # Step 3: Download the original uploaded video from S3
             input_path = str(job_dir / "input.mp4")
             self.s3.download_file(settings.uploads_bucket, source_key, input_path)
 
-            # 4. Transcode to 720p, 480p, and extract thumbnail
+            # Step 4: Convert the video into 720p, 480p, and snap a thumbnail image
             files = transcoder.transcode(input_path, str(job_dir), settings.ffmpeg_timeout_seconds)
 
-            # 5. Upload renditions to processed S3 bucket with correct Content-Type headers
+            # Step 5: Upload the converted videos and thumbnail back to S3
             keys = output_keys(video_id)
             for name, path in files.items():
                 content_type = "image/jpeg" if name == "thumbnail" else "video/mp4"
@@ -145,7 +150,7 @@ class Worker:
                     ExtraArgs={"ContentType": content_type},
                 )  # fmt: skip
 
-            # 6. Atomic DynamoDB state transition: mark 'ready' with CloudFront output keys
+            # Step 6: Mark status as "ready" in DynamoDB with the new stream links
             self.table.update_item(
                 Key={"video_id": video_id},
                 UpdateExpression="SET #s = :s, outputs = :o, thumbnail_key = :t, updated_at = :u",
@@ -159,11 +164,11 @@ class Worker:
             )
             logger.info("video %s ready", video_id)
         finally:
-            # 7. Clean up temporary scratch files from container disk
+            # Step 7: Delete temporary files from disk to keep the server clean
             shutil.rmtree(job_dir, ignore_errors=True)
 
     def mark_failed(self, video_id: str, error: str) -> None:
-        """Record transcode failure reason in DynamoDB for frontend error display."""
+        # If conversion broke, save the error in DynamoDB so user sees why it failed
         try:
             self.table.update_item(
                 Key={"video_id": video_id},
@@ -175,12 +180,12 @@ class Worker:
             logger.exception("could not mark video %s as failed", video_id)
 
     def delete(self, receipt: str) -> None:
-        """Acknowledge and remove message from SQS queue."""
+        # Remove the finished job from SQS so no other worker picks it up
         self.sqs.delete_message(QueueUrl=settings.sqs_queue_url, ReceiptHandle=receipt)
 
 
 def main() -> None:
-    # Register graceful shutdown signals (SIGTERM from ECS/Fargate Spot, SIGINT from Ctrl+C)
+    # Listen for stop signals (like Ctrl+C or AWS shutdown)
     signal.signal(signal.SIGTERM, handle_sigterm)
     signal.signal(signal.SIGINT, handle_sigterm)
     if not settings.sqs_queue_url:
@@ -188,10 +193,12 @@ def main() -> None:
 
     worker = Worker()
     logger.info("worker started, polling %s", settings.sqs_queue_url)
+    # Main loop: keep checking for new video jobs until told to stop
     while not shutting_down:
         try:
             worker.poll_once()
-        except Exception:  # transient AWS errors should not kill the worker
+        except Exception:
+            # If AWS has a quick hiccup, wait 5 seconds and try again instead of crashing
             logger.exception("poll failed, retrying in 5s")
             time.sleep(5)
     logger.info("worker stopped")
