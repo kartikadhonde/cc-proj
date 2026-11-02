@@ -1,3 +1,4 @@
+# ECS Cluster: manages running container tasks on serverless AWS Fargate
 resource "aws_ecs_cluster" "main" {
   name = "${local.name}-cluster"
 
@@ -7,6 +8,7 @@ resource "aws_ecs_cluster" "main" {
   }
 }
 
+# Capacity providers: FARGATE (on-demand) and FARGATE_SPOT (up to 70% cheaper spare compute)
 resource "aws_ecs_cluster_capacity_providers" "main" {
   cluster_name       = aws_ecs_cluster.main.name
   capacity_providers = ["FARGATE", "FARGATE_SPOT"]
@@ -17,6 +19,7 @@ resource "aws_ecs_cluster_capacity_providers" "main" {
   }
 }
 
+# CloudWatch log groups: stores application logs for 7 days
 resource "aws_cloudwatch_log_group" "service" {
   for_each = toset(["api", "worker"])
 
@@ -24,8 +27,9 @@ resource "aws_cloudwatch_log_group" "service" {
   retention_in_days = 7
 }
 
-# --- Application Load Balancer ---
+# --- Application Load Balancer (ALB) ---
 
+# Public load balancer: receives HTTP requests from CloudFront and routes them to API containers
 resource "aws_lb" "api" {
   name               = "${local.name}-alb"
   load_balancer_type = "application"
@@ -33,6 +37,7 @@ resource "aws_lb" "api" {
   subnets            = aws_subnet.public[*].id
 }
 
+# Target group: registers running API containers and pings /health every 15s
 resource "aws_lb_target_group" "api" {
   name                 = "${local.name}-api"
   port                 = 8000
@@ -41,6 +46,7 @@ resource "aws_lb_target_group" "api" {
   vpc_id               = aws_vpc.main.id
   deregistration_delay = 30
 
+  # Health check probe: fails after 3 bad responses, marks container healthy after 2 good ones
   health_check {
     path                = "/health"
     matcher             = "200"
@@ -51,6 +57,7 @@ resource "aws_lb_target_group" "api" {
   }
 }
 
+# HTTP listener: listens on port 80 and forwards traffic to the API target group
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.api.arn
   port              = 80
@@ -63,9 +70,6 @@ resource "aws_lb_listener" "http" {
 }
 
 # --- Task definitions ---
-# Terraform registers the first revision using the `latest` image tag. After that, CI
-# registers new revisions pinned to the commit SHA, and the services ignore
-# task_definition drift so `terraform apply` never rolls a deploy back.
 
 locals {
   log_config = {
@@ -80,6 +84,7 @@ locals {
   }
 }
 
+# API Task Definition: 0.25 vCPU, 512 MB RAM, runs FastAPI web server
 resource "aws_ecs_task_definition" "api" {
   family                   = "${local.name}-api"
   requires_compatibilities = ["FARGATE"]
@@ -104,6 +109,7 @@ resource "aws_ecs_task_definition" "api" {
   }])
 }
 
+# Worker Task Definition: 1.0 vCPU, 2048 MB RAM, runs FFmpeg multi-rendition transcoder
 resource "aws_ecs_task_definition" "worker" {
   family                   = "${local.name}-worker"
   requires_compatibilities = ["FARGATE"]
@@ -131,6 +137,7 @@ resource "aws_ecs_task_definition" "worker" {
 
 # --- Services ---
 
+# API ECS Service: runs 1 steady container task with automatic rollback on failed health checks
 resource "aws_ecs_service" "api" {
   name                              = "${local.name}-api"
   cluster                           = aws_ecs_cluster.main.id
@@ -142,7 +149,7 @@ resource "aws_ecs_service" "api" {
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
 
-  # Failed health checks on a new revision automatically roll back to the last good one.
+  # Deployment Circuit Breaker: automatically rolls back to previous version if health checks fail
   deployment_circuit_breaker {
     enable   = true
     rollback = true
@@ -167,6 +174,7 @@ resource "aws_ecs_service" "api" {
   depends_on = [aws_lb_listener.http]
 }
 
+# Worker ECS Service: runs on Fargate Spot (70% cheaper), scales dynamically from 0 to N tasks
 resource "aws_ecs_service" "worker" {
   name            = "${local.name}-worker"
   cluster         = aws_ecs_cluster.main.id

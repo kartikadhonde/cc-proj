@@ -1,8 +1,9 @@
-# Worker scale-from-zero driven by SQS queue depth.
-#   scale out: >= 1 visible message for 1 minute -> add 1-3 tasks (capped at max)
-#   scale in:  0 visible AND 0 in-flight messages for 5 minutes -> 0 tasks
-# Counting in-flight messages keeps a worker alive while it is still transcoding.
+# Auto-Scaling: scales worker tasks from 0 to 3 based on SQS queue backlog
+#   - Scale Out: >= 1 visible message for 1 minute -> adds 1 to 3 workers
+#   - Scale In:  0 visible AND 0 in-flight messages for 5 minutes -> scales back to 0 workers
+# Counting in-flight messages ensures workers finish current encoding before stopping.
 
+# Register worker ECS service as a scalable target (min: 0, max: 3)
 resource "aws_appautoscaling_target" "worker" {
   service_namespace  = "ecs"
   resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.worker.name}"
@@ -11,6 +12,7 @@ resource "aws_appautoscaling_target" "worker" {
   max_capacity       = var.worker_max_count
 }
 
+# Step Scaling Policy (Scale Out): launches more worker containers as queue grows
 resource "aws_appautoscaling_policy" "worker_scale_out" {
   name               = "${local.name}-worker-scale-out"
   policy_type        = "StepScaling"
@@ -23,17 +25,19 @@ resource "aws_appautoscaling_policy" "worker_scale_out" {
     cooldown                = 120
     metric_aggregation_type = "Maximum"
 
-    # Bounds are relative to the alarm threshold (1 message).
+    # Step 1: 1 to 4 pending messages -> add 1 worker
     step_adjustment {
       metric_interval_lower_bound = 0
       metric_interval_upper_bound = 4
       scaling_adjustment          = 1
     }
+    # Step 2: 4 to 9 pending messages -> add 2 workers
     step_adjustment {
       metric_interval_lower_bound = 4
       metric_interval_upper_bound = 9
       scaling_adjustment          = 2
     }
+    # Step 3: 9+ pending messages -> add 3 workers
     step_adjustment {
       metric_interval_lower_bound = 9
       scaling_adjustment          = 3
@@ -41,6 +45,7 @@ resource "aws_appautoscaling_policy" "worker_scale_out" {
   }
 }
 
+# Scale In Policy: shuts down all worker tasks to reach 0 when all jobs are complete
 resource "aws_appautoscaling_policy" "worker_scale_in" {
   name               = "${local.name}-worker-scale-in"
   policy_type        = "StepScaling"
@@ -53,6 +58,7 @@ resource "aws_appautoscaling_policy" "worker_scale_in" {
     cooldown                = 60
     metric_aggregation_type = "Maximum"
 
+    # Set capacity to 0 tasks
     step_adjustment {
       metric_interval_upper_bound = 0
       scaling_adjustment          = 0
@@ -60,6 +66,7 @@ resource "aws_appautoscaling_policy" "worker_scale_in" {
   }
 }
 
+# CloudWatch Alarm: detects pending jobs in SQS and triggers scale-out
 resource "aws_cloudwatch_metric_alarm" "queue_backlog" {
   alarm_name          = "${local.name}-queue-backlog"
   alarm_description   = "Messages waiting in video-jobs: scale workers out"
@@ -75,16 +82,17 @@ resource "aws_cloudwatch_metric_alarm" "queue_backlog" {
   alarm_actions       = [aws_appautoscaling_policy.worker_scale_out.arn]
 }
 
+# CloudWatch Alarm: detects when queue is empty for 5 minutes and triggers scale to zero
 resource "aws_cloudwatch_metric_alarm" "queue_empty" {
   alarm_name          = "${local.name}-queue-empty"
   alarm_description   = "No visible or in-flight jobs for 5 minutes: scale workers to zero"
   comparison_operator = "LessThanOrEqualToThreshold"
   threshold           = 0
   evaluation_periods  = 5
-  # SQS stops publishing metrics for idle queues; missing data means "empty".
-  treat_missing_data = "breaching"
-  alarm_actions      = [aws_appautoscaling_policy.worker_scale_in.arn]
+  treat_missing_data  = "breaching"
+  alarm_actions       = [aws_appautoscaling_policy.worker_scale_in.arn]
 
+  # Composite metric: visible (queued) + in-flight (currently encoding)
   metric_query {
     id          = "total"
     expression  = "visible + inflight"
@@ -115,8 +123,9 @@ resource "aws_cloudwatch_metric_alarm" "queue_empty" {
   }
 }
 
-# --- Operational alarms ---
+# --- Operational alerts via SNS ---
 
+# SNS topic for sending failure alerts (e.g. to admin email)
 resource "aws_sns_topic" "alerts" {
   name = "${local.name}-alerts"
 }
@@ -129,6 +138,7 @@ resource "aws_sns_topic_subscription" "alerts_email" {
   endpoint  = var.alert_email
 }
 
+# Alert: fires if any video fails 3 times and is diverted to the Dead-Letter Queue
 resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
   alarm_name          = "${local.name}-dlq-not-empty"
   alarm_description   = "A video failed 3 times and landed in the DLQ"
@@ -144,6 +154,7 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
 
+# Alert: fires if the backend API generates more than 5 server 5xx errors in 5 minutes
 resource "aws_cloudwatch_metric_alarm" "api_5xx" {
   alarm_name          = "${local.name}-api-5xx"
   alarm_description   = "API returned more than 5 server errors in 5 minutes"

@@ -1,5 +1,7 @@
-# Bucket names include the account ID so they are globally unique but stable across
-# destroy/apply cycles. force_destroy lets `terraform destroy` empty them.
+# S3 Storage Buckets:
+#   1. uploads   - temporary bucket for raw uploaded MP4 videos
+#   2. processed - permanent storage for converted 720p/480p videos and thumbnails
+#   3. frontend  - static website hosting (HTML, JS, CSS)
 
 locals {
   buckets = {
@@ -9,6 +11,7 @@ locals {
   }
 }
 
+# Create all three S3 buckets (force_destroy allows clean deletion during teardown)
 resource "aws_s3_bucket" "this" {
   for_each = local.buckets
 
@@ -16,6 +19,7 @@ resource "aws_s3_bucket" "this" {
   force_destroy = true
 }
 
+# Security: block all public internet access directly to S3 buckets
 resource "aws_s3_bucket_public_access_block" "this" {
   for_each = aws_s3_bucket.this
 
@@ -26,6 +30,7 @@ resource "aws_s3_bucket_public_access_block" "this" {
   restrict_public_buckets = true
 }
 
+# Ensure the AWS account strictly owns all uploaded files
 resource "aws_s3_bucket_ownership_controls" "this" {
   for_each = aws_s3_bucket.this
 
@@ -35,8 +40,9 @@ resource "aws_s3_bucket_ownership_controls" "this" {
   }
 }
 
-# --- uploads: browser PUTs via presigned URL, expires raw files, notifies SQS ---
+# --- uploads bucket: CORS, lifecycle expiry, and SQS event notifications ---
 
+# CORS policy: allows the user's browser to upload video directly via HTTP PUT
 resource "aws_s3_bucket_cors_configuration" "uploads" {
   bucket = aws_s3_bucket.this["uploads"].id
 
@@ -49,6 +55,7 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
   }
 }
 
+# Cost saver: auto-delete raw videos after 3 days once they are transcoded
 resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
   bucket = aws_s3_bucket.this["uploads"].id
 
@@ -70,6 +77,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
   }
 }
 
+# Event trigger: automatically notify SQS whenever a new .mp4 file lands in raw/
 resource "aws_s3_bucket_notification" "uploads" {
   bucket = aws_s3_bucket.this["uploads"].id
 
@@ -84,7 +92,7 @@ resource "aws_s3_bucket_notification" "uploads" {
   depends_on = [aws_sqs_queue_policy.jobs]
 }
 
-# --- processed + frontend: private, readable only by this CloudFront distribution ---
+# --- processed + frontend buckets: private access restricted to CloudFront CDN ---
 
 data "aws_iam_policy_document" "cloudfront_read" {
   for_each = toset(["processed", "frontend"])
@@ -107,6 +115,7 @@ data "aws_iam_policy_document" "cloudfront_read" {
   }
 }
 
+# Bucket policy: strictly allows only our CloudFront distribution to read media/frontend files
 resource "aws_s3_bucket_policy" "cloudfront_read" {
   for_each = data.aws_iam_policy_document.cloudfront_read
 

@@ -1,6 +1,9 @@
-# Public subnets only: ECS tasks get public IPs to reach ECR/S3/SQS/DynamoDB, which
-# avoids a NAT Gateway (~$32/month). Security groups block all unsolicited inbound.
+# Zero-NAT Network Architecture:
+# Containers run in public subnets with public IPs to communicate with AWS APIs (ECR, S3, SQS, DynamoDB).
+# This completely eliminates the need for an expensive NAT Gateway (~$32.40/month baseline cost).
+# Ingress security is strictly locked down using security groups.
 
+# Virtual Private Cloud (VPC): private cloud network for our application
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
@@ -9,11 +12,13 @@ resource "aws_vpc" "main" {
   tags = { Name = "${local.name}-vpc" }
 }
 
+# Internet Gateway: allows VPC resources to reach the internet
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
   tags   = { Name = "${local.name}-igw" }
 }
 
+# Public Subnets: 2 subnets across 2 Availability Zones (ap-south-1a and ap-south-1b) for high availability
 resource "aws_subnet" "public" {
   count = 2
 
@@ -25,6 +30,7 @@ resource "aws_subnet" "public" {
   tags = { Name = "${local.name}-public-${local.azs[count.index]}" }
 }
 
+# Route table: sends all outbound traffic (0.0.0.0/0) to the Internet Gateway
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -36,6 +42,7 @@ resource "aws_route_table" "public" {
   tags = { Name = "${local.name}-public" }
 }
 
+# Associate both subnets with the public route table
 resource "aws_route_table_association" "public" {
   count = 2
 
@@ -43,6 +50,9 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+# --- Security Groups (Firewalls) ---
+
+# ALB Security Group: allows public HTTP traffic on port 80 from anywhere
 resource "aws_security_group" "alb" {
   name        = "${local.name}-alb"
   description = "Public HTTP to the ALB"
@@ -64,6 +74,7 @@ resource "aws_security_group" "alb" {
   }
 }
 
+# API Security Group: allows incoming traffic on port 8000 ONLY from the ALB (no direct public access)
 resource "aws_security_group" "api" {
   name        = "${local.name}-api"
   description = "API tasks: inbound 8000 from the ALB only"
@@ -85,6 +96,7 @@ resource "aws_security_group" "api" {
   }
 }
 
+# Worker Security Group: ZERO inbound rules (blocks all incoming internet traffic)
 resource "aws_security_group" "worker" {
   name        = "${local.name}-worker"
   description = "Worker tasks: no inbound, outbound to AWS APIs"
